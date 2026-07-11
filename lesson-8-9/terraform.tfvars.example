@@ -1,0 +1,29 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+# Alternatively export these as TF_VAR_* environment variables.
+
+# REQUIRED. The Git repo that holds this project (Jenkinsfile, charts/, app/).
+# Jenkins pushes the image-tag bump here; Argo CD tracks it.
+git_repo_url = "https://github.com/Srh-Yakovenko-ua/DevOps_HW8-9.git"
+
+# Where this project lives inside that repo:
+#   "lesson-8-9" -> repo root is DevOps_HW8-9/, project is in the lesson-8-9/ subdir (default)
+#   ""           -> the project IS the repo root
+repo_path_prefix = "lesson-8-9"
+
+# Branch the pipeline pushes to and Argo CD syncs from.
+gitops_branch = "main"
+
+# GitHub credentials the Jenkins pipeline uses to push the values bump.
+# Use a fine-grained PAT / classic token with "repo" (Contents: read/write) scope.
+# Prefer setting the token via the environment: export TF_VAR_github_token=ghp_xxx
+github_username = "Srh-Yakovenko-ua"
+github_token    = "" # set via TF_VAR_github_token, do NOT commit a real token
+
+# Set true only if the Git repo is private (Argo CD then gets a read credential).
+repo_private = false
+
+# --- Optional overrides (sensible defaults already set) ---------------------
+# aws_region             = "us-west-2"
+# jenkins_admin_password = ""   # empty = chart generates a random one
+# jenkins_service_type   = "LoadBalancer"
+# argocd_service_type    = "LoadBalancer"

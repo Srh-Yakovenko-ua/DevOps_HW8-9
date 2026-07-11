@@ -1,0 +1,163 @@
+// Dealsbe CI/CD pipeline.
+//
+// Runs on an ephemeral Kubernetes agent (created by the Jenkins Kubernetes
+// cloud). Two purpose-built containers do the work:
+//   * kaniko - builds the Docker image and pushes it to ECR (daemonless, and
+//              authenticated to ECR through IRSA on the jenkins-agent SA).
+//   * tools  - git + yq, used to bump the Helm image tag and push to Git.
+//
+// Every account/cluster specific value (ECR_REPO, AWS_REGION, GIT_REPO_URL,
+// GITOPS_BRANCH, VALUES_PATH, APP_CONTEXT, GIT_CREDENTIALS_ID) is injected as a
+// global environment variable by JCasC (see modules/jenkins/values.yaml), so
+// this file is 100% generic and can be committed as-is to any account's repo.
+//
+// GitOps handoff: after the image tag in VALUES_PATH is committed to Git,
+// Argo CD detects the change and syncs the cluster - Jenkins never touches
+// kubectl/helm directly.
+
+pipeline {
+  agent {
+    kubernetes {
+      // jnlp is injected automatically; we add the two build containers. The
+      // agent SA is IRSA-annotated so Kaniko can push to ECR with no secrets.
+      yaml '''
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app.kubernetes.io/part-of: dealsbe-cicd
+spec:
+  serviceAccountName: jenkins-agent
+  containers:
+    - name: kaniko
+      image: gcr.io/kaniko-project/executor:v1.23.2-debug
+      imagePullPolicy: IfNotPresent
+      command: ["sleep"]
+      args: ["9999999"]
+      tty: true
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "1024Mi"
+    - name: tools
+      image: alpine:3.20
+      command: ["cat"]
+      tty: true
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+'''
+    }
+  }
+
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+    timeout(time: 30, unit: 'MINUTES')
+  }
+
+  // Poll Git for changes. The [skip ci] guard below stops the GitOps commit
+  // this pipeline makes from triggering an endless rebuild loop. Replace with a
+  // GitHub webhook in production for instant, poll-free triggering.
+  triggers {
+    pollSCM('H/5 * * * *')
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Prepare') {
+      steps {
+        container('tools') {
+          sh 'apk add --no-cache git >/dev/null'
+          script {
+            // Immutable, traceable tag: <8-char sha>-<build number>.
+            env.GIT_SHA   = sh(returnStdout: true, script: 'git rev-parse --short=8 HEAD').trim()
+            env.IMAGE_TAG = "${env.GIT_SHA}-${env.BUILD_NUMBER}"
+
+            // Skip if this build was triggered by our own GitOps commit.
+            def msg = sh(returnStdout: true, script: 'git log -1 --pretty=%B').trim()
+            env.SKIP_CI = msg.contains('[skip ci]') ? 'true' : 'false'
+          }
+          echo "Image tag: ${env.ECR_REPO}:${env.IMAGE_TAG}  (skip_ci=${env.SKIP_CI})"
+        }
+      }
+    }
+
+    stage('Build & Push (Kaniko -> ECR)') {
+      when { expression { env.SKIP_CI != 'true' } }
+      steps {
+        container('kaniko') {
+          sh '''
+            set -eu
+            echo ">> Building ${ECR_REPO}:${IMAGE_TAG} from ${APP_CONTEXT}"
+            /kaniko/executor \
+              --context="dir://${WORKSPACE}/${APP_CONTEXT}" \
+              --dockerfile="Dockerfile" \
+              --destination="${ECR_REPO}:${IMAGE_TAG}" \
+              --destination="${ECR_REPO}:latest" \
+              --cleanup
+          '''
+        }
+      }
+    }
+
+    stage('Bump Helm values & push (GitOps)') {
+      when { expression { env.SKIP_CI != 'true' } }
+      steps {
+        container('tools') {
+          sh 'apk add --no-cache git yq openssh >/dev/null'
+          withCredentials([usernamePassword(
+            credentialsId: env.GIT_CREDENTIALS_ID,
+            usernameVariable: 'GIT_USER',
+            passwordVariable: 'GIT_TOKEN')]) {
+            sh '''
+              set -eu
+              git config user.email "jenkins@dealsbe.ci"
+              git config user.name  "Dealsbe CI"
+
+              echo ">> Setting image.tag=${IMAGE_TAG} in ${VALUES_PATH}"
+              yq -i ".image.tag = \\"${IMAGE_TAG}\\"" "${VALUES_PATH}"
+
+              if git diff --quiet -- "${VALUES_PATH}"; then
+                echo ">> No change in values (already at ${IMAGE_TAG}); nothing to push."
+                exit 0
+              fi
+
+              git add "${VALUES_PATH}"
+              git commit -m "ci: bump dealsbe image tag to ${IMAGE_TAG} [skip ci]"
+
+              # Push over HTTPS with the token; keep it out of the log.
+              set +x
+              REPO_PATH=$(printf '%s' "${GIT_REPO_URL}" | sed -e 's#^https://##')
+              git push "https://${GIT_USER}:${GIT_TOKEN}@${REPO_PATH}" "HEAD:${GITOPS_BRANCH}"
+              set -x
+              echo ">> Pushed values bump to ${GITOPS_BRANCH}. Argo CD will sync."
+            '''
+          }
+        }
+      }
+    }
+  }
+
+  post {
+    success {
+      script {
+        if (env.SKIP_CI == 'true') {
+          echo "No app changes to build (skip ci commit). Nothing pushed."
+        } else {
+          echo "CI/CD OK. Image ${env.ECR_REPO}:${env.IMAGE_TAG} pushed. Argo CD is syncing the cluster."
+        }
+      }
+    }
+    failure {
+      echo "Pipeline failed. Check the stage logs above."
+    }
+  }
+}

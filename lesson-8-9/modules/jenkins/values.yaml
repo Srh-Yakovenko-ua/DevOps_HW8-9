@@ -1,0 +1,138 @@
+# Jenkins Helm values, rendered by Terraform (templatefile).
+#
+# Dollar-brace tokens are Terraform variables and get substituted at apply time.
+# JCasC runtime tokens (GITHUB_USERNAME / GITHUB_TOKEN) are escaped in the body
+# so they reach Jenkins verbatim. Nothing account-specific is hard-coded here.
+
+controller:
+  # Force every build onto an ephemeral Kubernetes agent (no builds on the
+  # controller). The agents are configured automatically by the chart's JCasC.
+  numExecutors: 0
+
+  # Expose the UI. The in-tree AWS cloud provider turns a LoadBalancer Service
+  # into a public ELB; no extra controller needed.
+  serviceType: "${service_type}"
+  servicePort: 8080
+
+  admin:
+    username: "${admin_user}"
+    # password: left to the chart (random) unless Terraform sets it via set_sensitive.
+
+  # Default plugins (kubernetes, workflow-aggregator, git, configuration-as-code)
+  # plus the ones the pipeline + seed job need.
+  additionalPlugins:
+    - job-dsl
+    - pipeline-stage-view
+    - credentials-binding
+    - timestamper
+
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1024Mi"
+    limits:
+      cpu: "2000m"
+      memory: "2048Mi"
+
+  # Mount the GitHub token into the controller so JCasC can read it from the
+  # GITHUB_USERNAME / GITHUB_TOKEN env vars when it materialises the credential.
+  containerEnv:
+    - name: GITHUB_USERNAME
+      valueFrom:
+        secretKeyRef:
+          name: "${github_secret_name}"
+          key: username
+    - name: GITHUB_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: "${github_secret_name}"
+          key: token
+
+  JCasC:
+    defaultConfig: true
+    configScripts:
+      welcome-message: |
+        jenkins:
+          systemMessage: "Dealsbe CI/CD - Jenkins configured as code (Terraform + JCasC). Build -> ECR -> Git bump -> Argo CD."
+
+      # GitHub credential used by the pipeline to push the values bump.
+      github-credentials: |
+        credentials:
+          system:
+            domainCredentials:
+              - credentials:
+                  - usernamePassword:
+                      scope: GLOBAL
+                      id: "${github_credentials_id}"
+                      username: "$${GITHUB_USERNAME}"
+                      password: "$${GITHUB_TOKEN}"
+                      description: "GitHub PAT used by the GitOps pipeline"
+
+      # Account/cluster specific values exposed to every build as env vars, so
+      # the committed Jenkinsfile stays 100% generic.
+      pipeline-env: |
+        jenkins:
+          globalNodeProperties:
+            - envVars:
+                env:
+                  - key: "ECR_REPO"
+                    value: "${ecr_repository_url}"
+                  - key: "AWS_REGION"
+                    value: "${aws_region}"
+                  - key: "AWS_ACCOUNT_ID"
+                    value: "${account_id}"
+                  - key: "GIT_REPO_URL"
+                    value: "${git_repo_url}"
+                  - key: "GITOPS_BRANCH"
+                    value: "${gitops_branch}"
+                  - key: "VALUES_PATH"
+                    value: "${values_path}"
+                  - key: "APP_CONTEXT"
+                    value: "${app_context_path}"
+                  - key: "GIT_CREDENTIALS_ID"
+                    value: "${github_credentials_id}"
+
+      # Seed job: creates the pipeline job from the Jenkinsfile in Git.
+      seed-job: |
+        jobs:
+          - script: |
+              pipelineJob('${job_name}') {
+                description('Dealsbe CI/CD: Kaniko build -> push to ECR -> bump Helm values -> push to Git. Argo CD then syncs the cluster.')
+                definition {
+                  cpsScm {
+                    scm {
+                      git {
+                        remote {
+                          url('${git_repo_url}')
+                          credentials('${github_credentials_id}')
+                        }
+                        branches('*/${gitops_branch}')
+                      }
+                    }
+                    scriptPath('${jenkinsfile_path}')
+                  }
+                }
+              }
+
+# Persist JENKINS_HOME on an EBS volume (needs the EBS CSI driver + a default
+# StorageClass, both provisioned by Terraform).
+persistence:
+  enabled: true
+  storageClass: "${storage_class}"
+  size: "${persistence_size}"
+
+# Build agents run in the Jenkins namespace under an IRSA-enabled ServiceAccount
+# so Kaniko can push to ECR.
+agent:
+  enabled: true
+  namespace: "${namespace}"
+
+serviceAccountAgent:
+  create: true
+  name: "${agent_service_account_name}"
+  annotations:
+    eks.amazonaws.com/role-arn: "${agent_role_arn}"
+
+rbac:
+  create: true
+  readSecrets: true

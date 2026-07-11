@@ -1,0 +1,110 @@
+# Default values for the django-app chart.
+# Override any of these with --set key=value or -f my-values.yaml.
+
+# Number of pods when the autoscaler is OFF. When autoscaling.enabled is true
+# the HPA owns the replica count and this value is ignored.
+replicaCount: 2
+
+image:
+  # repository: in the GitOps flow Argo CD injects this at sync time
+  # (image.repository Helm parameter = your ECR URL), so you normally do NOT
+  # edit it here. For a manual `helm install` set it to your ECR repo URL:
+  #   terraform output -raw ecr_repository_url
+  # e.g. 123456789012.dkr.ecr.us-west-2.amazonaws.com/lesson-8-9-ecr
+  repository: REPLACE_WITH_ECR_REPOSITORY_URL
+  # tag: the ONLY field the Jenkins pipeline bumps. Argo CD reconciles the
+  # cluster whenever this changes in Git. Starts at "latest" (the seed image).
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Optional image pull secrets. Not needed on EKS because the node role has
+# AmazonEC2ContainerRegistryReadOnly, so the kubelet pulls from ECR directly.
+imagePullSecrets: []
+
+# The app is the Dealsbe application. nameOverride brands the Kubernetes
+# resources as "dealsbe" while the chart folder stays charts/django-app.
+nameOverride: "dealsbe"
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# ---------------------------------------------------------------------------
+# ConfigMap: the environment variables carried over from theme 4.
+# Rendered into a ConfigMap and injected into the pod with envFrom.
+# ---------------------------------------------------------------------------
+config:
+  DEBUG: "0"
+  SECRET_KEY: "change-me-in-production"
+  ALLOWED_HOSTS: "*"
+  CSRF_TRUSTED_ORIGINS: "http://localhost,http://127.0.0.1"
+
+  # Database mode. "1" = SQLite: the app is fully self contained and needs no
+  # database pod, so the chart works out of the box. Set to "0" and point
+  # POSTGRES_HOST at a real PostgreSQL (in-cluster or RDS) to use Postgres.
+  USE_SQLITE: "1"
+
+  # PostgreSQL connection settings (theme 4). Used only when USE_SQLITE="0".
+  POSTGRES_DB: "appdb"
+  POSTGRES_USER: "appuser"
+  POSTGRES_PASSWORD: "apppass"
+  POSTGRES_HOST: ""
+  POSTGRES_PORT: "5432"
+
+# ---------------------------------------------------------------------------
+# Service: type LoadBalancer so AWS provisions an external load balancer with
+# a public DNS name / IP.
+# ---------------------------------------------------------------------------
+service:
+  type: LoadBalancer
+  port: 80 # port exposed by the load balancer; forwards to the container's http port (containerPort)
+  annotations: {}
+
+# ---------------------------------------------------------------------------
+# Horizontal Pod Autoscaler: scale between 2 and 6 pods, target 70% CPU.
+# Requires metrics-server in the cluster and resource requests below.
+# ---------------------------------------------------------------------------
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+# Resource requests/limits. The CPU *request* is what the HPA percentage is
+# measured against, so it must be set for the autoscaler to work.
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Container port gunicorn listens on inside the pod.
+containerPort: 8000
+
+# Liveness/readiness probes hit /healthz/ which never touches the database.
+probes:
+  path: /healthz/
+
+# ---------------------------------------------------------------------------
+# Ingress (BONUS): disabled by default. Enable to expose the app over a custom
+# domain with TLS via cert-manager. Requires an ingress controller (nginx) and
+# cert-manager with a ClusterIssuer installed in the cluster.
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: false
+  className: nginx
+  host: dealsbe.com
+  path: /
+  pathType: Prefix
+  tls: true
+  clusterIssuer: letsencrypt-prod
+  annotations: {}
+
+# Extra pod scheduling controls (optional).
+nodeSelector: {}
+tolerations: []
+affinity: {}

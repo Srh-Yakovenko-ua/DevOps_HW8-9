@@ -1,0 +1,17 @@
+# Git repository credential for Argo CD. Only rendered for a private repo
+# (repository.enabled=true). Argo CD discovers it by the secret-type label.
+{{- if .Values.repository.enabled }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Values.appName }}-repo
+  namespace: {{ .Release.Namespace }}
+  labels:
+    argocd.argoproj.io/secret-type: repository
+type: Opaque
+stringData:
+  type: git
+  url: {{ .Values.repository.url | quote }}
+  username: {{ .Values.repository.username | quote }}
+  password: {{ .Values.repository.password | quote }}
+{{- end }}

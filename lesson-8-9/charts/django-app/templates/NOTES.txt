@@ -1,0 +1,23 @@
+{{ .Chart.Name }} ({{ include "django-app.fullname" . }}) has been deployed.
+
+1. Watch the pods come up:
+   kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }} -w
+
+2. Get the external LoadBalancer address (may take a minute to be assigned):
+   kubectl get svc {{ include "django-app.fullname" . }} \
+     -o jsonpath='{.status.loadBalancer.ingress[0].hostname}{"\n"}'
+
+   Then open http://<that-address>/ in your browser.
+
+{{- if .Values.autoscaling.enabled }}
+
+3. Check the Horizontal Pod Autoscaler ({{ .Values.autoscaling.minReplicas }}-{{ .Values.autoscaling.maxReplicas }} pods, target {{ .Values.autoscaling.targetCPUUtilizationPercentage }}% CPU):
+   kubectl get hpa {{ include "django-app.fullname" . }}
+   (Requires metrics-server. Install it with `make metrics-server` if you have not.)
+{{- end }}
+
+{{- if .Values.ingress.enabled }}
+
+4. Ingress is enabled for host: {{ .Values.ingress.host }}
+   Point a DNS record for {{ .Values.ingress.host }} at your ingress controller's load balancer.
+{{- end }}

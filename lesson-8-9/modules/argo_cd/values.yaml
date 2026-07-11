@@ -1,0 +1,20 @@
+# Argo CD Helm values, rendered by Terraform (templatefile).
+
+configs:
+  params:
+    # Serve the UI/API over plain HTTP (TLS terminates at the LoadBalancer / is
+    # not needed for a demo). Prevents the redirect loop you hit when the server
+    # does its own TLS behind an L4 load balancer.
+    server.insecure: true
+
+server:
+  service:
+    # LoadBalancer exposes the Argo CD UI on a public address. Switch to
+    # ClusterIP and use `kubectl port-forward` if you prefer not to expose it.
+    type: ${server_service_type}
+
+# Trim components not needed for this project to save cluster resources.
+dex:
+  enabled: false
+notifications:
+  enabled: false

@@ -1,0 +1,42 @@
+# The Argo CD Application that continuously deploys Dealsbe.
+#
+# source.helm.parameters injects the ECR image.repository at render time, so the
+# repo's values.yaml only carries image.tag - exactly the field the Jenkins
+# pipeline bumps. When that tag changes in Git, Argo CD detects drift and (with
+# automated sync) rolls the Deployment automatically.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Values.appName }}
+  namespace: {{ .Release.Namespace }}
+  finalizers:
+    # Cascade-delete the app's resources (incl. its LoadBalancer) when the
+    # Application is removed - important for a clean `terraform destroy`.
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ .Values.project | quote }}
+  source:
+    repoURL: {{ .Values.repoURL | quote }}
+    targetRevision: {{ .Values.targetRevision | quote }}
+    path: {{ .Values.path | quote }}
+    helm:
+      parameters:
+        - name: image.repository
+          value: {{ .Values.imageRepository | quote }}
+  destination:
+    server: {{ .Values.destinationServer | quote }}
+    namespace: {{ .Values.destinationNamespace | quote }}
+  syncPolicy:
+    {{- if .Values.autoSync }}
+    automated:
+      prune: true
+      selfHeal: true
+    {{- end }}
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 3m

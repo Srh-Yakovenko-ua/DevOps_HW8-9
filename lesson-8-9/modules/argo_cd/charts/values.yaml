@@ -1,0 +1,26 @@
+# Defaults for the app-of-apps chart. Terraform overrides these with the real
+# repo URL, chart path, target namespace and ECR image repository.
+
+# Argo CD Application
+appName: dealsbe
+project: default
+repoURL: ""
+targetRevision: main
+path: charts/django-app
+
+destinationServer: https://kubernetes.default.svc
+destinationNamespace: dealsbe
+
+# Injected as the chart's image.repository Helm parameter, so the tracked
+# values.yaml only needs to carry image.tag (which Jenkins bumps).
+imageRepository: ""
+
+# Enable Argo CD's automated sync (prune + selfHeal).
+autoSync: true
+
+# Optional Git repository credential (only needed for a private repo).
+repository:
+  enabled: false
+  url: ""
+  username: ""
+  password: ""

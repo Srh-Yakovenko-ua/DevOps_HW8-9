@@ -1,0 +1,6 @@
+apiVersion: v2
+name: dealsbe-apps
+description: App-of-apps chart that registers the Dealsbe Argo CD Application (and, for a private repo, its repository credential).
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

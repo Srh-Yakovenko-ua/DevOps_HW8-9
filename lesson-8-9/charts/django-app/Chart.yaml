@@ -1,0 +1,20 @@
+apiVersion: v2
+name: django-app
+description: Helm chart that deploys the Dealsbe application (Django) on Amazon EKS with a ConfigMap, a LoadBalancer Service and a Horizontal Pod Autoscaler.
+type: application
+
+# Chart version. Bump on every change to the chart itself.
+version: 0.1.0
+
+# Version of the application (the Dealsbe image) this chart deploys.
+appVersion: "1.0.0"
+
+keywords:
+  - dealsbe
+  - django
+  - eks
+  - kubernetes
+  - hpa
+
+maintainers:
+  - name: Serhii Yakovenko
