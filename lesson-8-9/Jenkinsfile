@@ -159,5 +159,9 @@ spec:
     failure {
       echo "Pipeline failed. Check the stage logs above."
     }
+    always {
+      // Wipe the agent workspace so nothing is left behind between builds.
+      cleanWs()
+    }
   }
 }

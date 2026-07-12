@@ -25,6 +25,7 @@ controller:
     - pipeline-stage-view
     - credentials-binding
     - timestamper
+    - ws-cleanup
 
   resources:
     requests:
@@ -54,6 +55,23 @@ controller:
       welcome-message: |
         jenkins:
           systemMessage: "Dealsbe CI/CD - Jenkins configured as code (Terraform + JCasC). Build -> ECR -> Git bump -> Argo CD."
+
+      # Kubernetes cloud: where the pipeline's ephemeral build agents are launched.
+      # The controller reaches the Kubernetes API in-cluster (empty serverUrl uses
+      # the mounted service account), and agents call back over the jenkins-agent
+      # service on port 50000.
+      kubernetes-cloud: |
+        jenkins:
+          clouds:
+            - kubernetes:
+                name: "kubernetes"
+                serverUrl: ""
+                namespace: "${namespace}"
+                jenkinsUrl: "http://jenkins.${namespace}.svc.cluster.local:8080"
+                jenkinsTunnel: "jenkins-agent.${namespace}.svc.cluster.local:50000"
+                connectTimeout: 5
+                readTimeout: 15
+                containerCapStr: "10"
 
       # GitHub credential used by the pipeline to push the values bump.
       github-credentials: |
